@@ -85,7 +85,6 @@ compileToReadable =
     >=> PLC.rename
     >=> through typeCheckTerm
     >=> simplifyTerm
-    >=> (pure . ThunkRec.thunkRecursions)
     >=> floatTerm
 
 -- | The 2nd half of the PIR compiler pipeline.
@@ -93,7 +92,11 @@ compileToReadable =
 -- Note: the result *does* have globally unique names.
 compileReadableToPlc :: Compiling m e uni fun a => Term TyName Name uni fun (Provenance a) -> m (PLCTerm uni fun a)
 compileReadableToPlc =
-    NonStrict.compileNonStrictBindings
+    NonStrict.compileNonStrictBindings False
+    >=> (pure . ThunkRec.thunkRecursions)
+    -- Process only the non-strict bindings created by 'thunkRecursions' with unit delay/forces
+    -- See Note [Using unit versus force/delay]
+    >=> NonStrict.compileNonStrictBindings True
     >=> Let.compileLets Let.DataTypes
     >=> Let.compileLets Let.RecTerms
     -- We introduce some non-recursive let bindings while eliminating recursive let-bindings, so we
