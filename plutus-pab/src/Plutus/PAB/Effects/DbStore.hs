@@ -29,17 +29,18 @@ track changes over time.
 -}
 
 module Plutus.PAB.Effects.DbStore where
-
-import           Cardano.BM.Trace                (Trace, logDebug)
+import           Cardano.BM.Trace                (Trace, logDebug, logError)
+import           Control.Exception               (SomeException (..), catch)
 import           Control.Monad.Freer             (Eff, LastMember, Member, type (~>))
 import           Control.Monad.Freer.Reader      (Reader, ask)
 import           Control.Monad.Freer.TH          (makeEffect)
 import           Data.Text                       (Text)
+import qualified Data.Text                       as Text
 import           Database.Beam
 import           Database.Beam.Backend.SQL
 import           Database.Beam.Migrate
 import           Database.Beam.Schema.Tables
-import           Database.Beam.Sqlite
+import           Database.Beam.Sqlite            (Sqlite, SqliteM, runBeamSqliteDebug)
 import           Database.SQLite.Simple          (Connection)
 import           Plutus.PAB.Monitoring.PABLogMsg (PABLogMsg (..), PABMultiAgentMsg (..))
 
@@ -124,28 +125,39 @@ handleDbStore ::
   ~> Eff effs
 handleDbStore trace eff = do
   connection <- ask @Connection
-  let traceSql = logDebug trace . SMultiAgent . SqlLog
 
   case eff of
     AddRow table record ->
-      liftIO
-        $ runBeamSqliteDebug traceSql connection
-        $ runInsert
-        $ insert table (insertValues [record])
+        liftIO
+            $ runBeamPAB trace connection ()
+            $ runInsert
+            $ insert table (insertValues [record])
 
-    SelectList q ->
-      liftIO
-        $ runBeamSqliteDebug traceSql connection
-        $ runSelectReturningList q
+    SelectList q -> do
+        liftIO $ runBeamPAB trace connection [] $ runSelectReturningList q
 
     SelectOne q ->
-      liftIO
-        $ runBeamSqliteDebug traceSql connection
-        $ runSelectReturningOne q
+        liftIO $ runBeamPAB trace connection Nothing $ runSelectReturningOne q
 
     UpdateRow q ->
-      liftIO
-        $ runBeamSqliteDebug traceSql connection
-        $ runUpdate q
+        liftIO $ runBeamPAB trace connection () $ runUpdate q
+
+-- | Same as 'Database.Beam.Sqlite.runBeamSqliteDebug'. But in the case where
+-- an IO exception is thrown, it is caught, a message is logged and returns a
+-- default value.
+--
+-- We currently suppose that any thrown exception is because the MIGRATE command
+-- was not executed.
+runBeamPAB :: Trace IO (PABLogMsg a) -> Connection -> b -> SqliteM b -> IO b
+runBeamPAB trace connection d action = do
+    let traceSql = logDebug trace . SMultiAgent . SqlLog
+    liftIO $
+        catch (runBeamSqliteDebug traceSql connection action) handleException
+
+    where
+        handleException (SomeException e) = do
+            let msg = Text.pack $ show e
+            logError trace (SMultiAgent $ MigrationNotDone msg)
+            return d
 
 makeEffect ''DbStoreEffect

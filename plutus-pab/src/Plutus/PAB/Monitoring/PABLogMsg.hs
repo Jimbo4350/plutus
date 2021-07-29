@@ -24,7 +24,7 @@ module Plutus.PAB.Monitoring.PABLogMsg(
 import           Data.Aeson                       (FromJSON, ToJSON, Value)
 import qualified Data.Aeson                       as JSON
 import           Data.Text                        (Text)
-import           Data.Text.Prettyprint.Doc        (Pretty (..), colon, viaShow, (<+>))
+import           Data.Text.Prettyprint.Doc        (Pretty (..), colon, line, viaShow, (<+>))
 import           GHC.Generics                     (Generic)
 
 import           Cardano.BM.Data.Tracer           (ToObject (..), TracingVerbosity (..))
@@ -143,6 +143,7 @@ data PABMultiAgentMsg t =
     | StartingPABBackendServer Int
     | StartingMetadataServer Int
     | WalletBalancingMsg Wallet TxBalanceMsg
+    | MigrationNotDone T.Text
     deriving stock Generic
 
 instance (StructuredLog (ContractDef t), ToJSON (ContractDef t)) => ToObject (PABMultiAgentMsg t) where
@@ -155,6 +156,7 @@ instance (StructuredLog (ContractDef t), ToJSON (ContractDef t)) => ToObject (PA
         StartingPABBackendServer i -> mkObjectStr "starting backend server" (Tagged @"port" i)
         StartingMetadataServer i   -> mkObjectStr "starting backend server" (Tagged @"port" i)
         WalletBalancingMsg w m     -> mkObjectStr "balancing" (Tagged @"wallet" w, Tagged @"message" m)
+        MigrationNotDone t         -> toObject v t
 
 deriving stock instance (Show (ContractDef t)) => Show (PABMultiAgentMsg t)
 deriving anyclass instance (ToJSON (ContractDef t)) => ToJSON (PABMultiAgentMsg t)
@@ -172,6 +174,11 @@ instance Pretty (ContractDef t) => Pretty (PABMultiAgentMsg t) where
         StartingMetadataServer port ->
             "Starting metadata server on port:" <+> pretty port
         WalletBalancingMsg w m -> pretty w <> colon <+> pretty m
+        MigrationNotDone m ->
+            pretty m
+         <> line
+         <> "Did you forget to run the 'migrate' command ?"
+        <+> "(ex. 'plutus-pab-migrate' or 'plutus-pab-setup migrate pab-core.db')"
 
 data CoreMsg t =
     FindingContract ContractInstanceId
